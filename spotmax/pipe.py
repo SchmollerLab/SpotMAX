@@ -2470,3 +2470,358 @@ def _log_filtered_number_spots_from_dfs(
     print('*'*len(header))
     logger_func(f'{header}\n\n{info}')
     print('-'*len(header))
+
+class Model:
+    """End-to-end spot detection and optional feature extraction pipeline.
+
+    Parameters
+    ----------
+    spots_zyx_radii_pxl : sequence of 3 floats
+        Expected spot radii in z, y, and x in pixels. Used for detection,
+        feature measurement, and fitting.
+    zyx_voxel_size : sequence of 3 floats, optional
+        Voxel size in z, y, and x in micrometers per pixel. Defaults to
+        (1, 1, 1) through the underlying pipeline functions.
+    zyx_spot_min_vol_um : sequence of 3 floats, optional
+        Minimum spot radii in micrometers for SpotSIZE. If omitted, these are
+        derived from spots_zyx_radii_pxl and zyx_voxel_size.
+    segmentation_kwargs : dict, optional
+        Keyword arguments for spots_semantic_segmentation. The default
+        thresholding method is threshold_li. Preprocessing settings such as
+        gauss_sigma, do_remove_hot_pixels, and do_sharpen are also read here.
+    detection_kwargs : dict, optional
+        Additional keyword arguments for spot_detection, such as
+        detection_method and spot_footprint.
+    features_kwargs : dict, optional
+        Additional keyword arguments for spots_calc_features_and_filter.
+    spotfit_kwargs : dict, optional
+        Additional keyword arguments for spotfit.
+    spotfit_kernel : spotmax.core.SpotFIT, optional
+        Initialized SpotFIT kernel. A new kernel is created for each call to
+        predict when this is omitted.
+    frame_i : int, optional
+        Frame index used by the feature and fitting pipeline. Defaults to 0.
+
+    Notes
+    -----
+    By default, predict returns only the coordinate DataFrame. If masks or
+    preprocessed images are requested, predict returns a tuple containing the
+    DataFrame and a dictionary with the requested outputs.
+    """
+
+    def __init__(
+            self,
+            spots_zyx_radii_pxl,
+            zyx_voxel_size=None,
+            zyx_spot_min_vol_um=None,
+            segmentation_kwargs=None,
+            detection_kwargs=None,
+            features_kwargs=None,
+            spotfit_kwargs=None,
+            spotfit_kernel=None,
+            frame_i=0
+        ):
+        self.spots_zyx_radii_pxl = np.asarray(
+            spots_zyx_radii_pxl, dtype=float
+        )
+        if self.spots_zyx_radii_pxl.shape != (3,):
+            raise ValueError(
+                "spots_zyx_radii_pxl must contain three values (z, y, x)."
+            )
+
+        self.zyx_voxel_size = (
+            None if zyx_voxel_size is None
+            else np.asarray(zyx_voxel_size, dtype=float)
+        )
+        if (self.zyx_voxel_size is not None
+                and self.zyx_voxel_size.shape != (3,)):
+            raise ValueError("zyx_voxel_size must contain three values.")
+
+        self.zyx_spot_min_vol_um = (
+            None if zyx_spot_min_vol_um is None
+            else np.asarray(zyx_spot_min_vol_um, dtype=float)
+        )
+        if (self.zyx_spot_min_vol_um is not None
+                and self.zyx_spot_min_vol_um.shape != (3,)):
+            raise ValueError("zyx_spot_min_vol_um must contain three values.")
+
+        self.segmentation_kwargs = dict(segmentation_kwargs or {})
+        self.detection_kwargs = dict(detection_kwargs or {})
+        self.features_kwargs = dict(features_kwargs or {})
+        self.spotfit_kwargs = dict(spotfit_kwargs or {})
+        self.spotfit_kernel = spotfit_kernel
+        self.frame_i = frame_i
+
+    @staticmethod
+    def _get_segmentation_mask(result, image_shape):
+        if isinstance(result, np.ndarray):
+            return result
+
+        if not isinstance(result, dict):
+            raise TypeError(
+                "spots_semantic_segmentation must return an array or dict."
+            )
+
+        candidates = []
+        for key, value in result.items():
+            if key == "input_image" or "prediction" in key.lower():
+                continue
+            if isinstance(value, np.ndarray):
+                candidates.append((key, value))
+
+        matching = [
+            (key, value) for key, value in candidates
+            if value.shape == image_shape
+        ]
+        if len(matching) == 1:
+            return matching[0][1]
+        if len(matching) == 0 and len(candidates) == 1:
+            return candidates[0][1]
+
+        candidate_names = [key for key, _ in candidates]
+        raise ValueError(
+            "Expected one segmentation mask with the input image shape; "
+            f"found candidate outputs {candidate_names}. Configure one "
+            "segmentation method in segmentation_kwargs."
+        )
+
+    @staticmethod
+    def _without_reserved_kwargs(kwargs, reserved):
+        return {
+            key: value for key, value in kwargs.items()
+            if key not in reserved
+        }
+
+    def predict(
+            self,
+            image,
+            lab=None,
+            return_features=False,
+            return_masks=False,
+            return_preprocessed=False
+        ):
+        """Detect spots and optionally calculate features and return outputs.
+
+        Parameters
+        ----------
+        image : (Y, X) or (Z, Y, X) numpy.ndarray
+            Raw spots-channel image.
+        lab : (Y, X) or (Z, Y, X) numpy.ndarray, optional
+            Object labels used to constrain detection and organize output rows.
+        return_features : bool, optional
+            If True, compute detection features and SpotFIT features and include
+            them in the returned DataFrame. Defaults to False.
+        return_masks : bool, optional
+            If True, return the selected segmentation mask and fitted spot mask
+            and labels. Spot fitting is run to generate the fitted labels.
+            Defaults to False.
+        return_preprocessed : bool, optional
+            If True, also return the preprocessed image and the detection image.
+            The detection image is the DoG-sharpened image when do_sharpen is
+            enabled; otherwise it is the preprocessed image. Defaults to False.
+
+        Returns
+        -------
+        pandas.DataFrame or tuple
+            By default, a DataFrame with spot coordinates. If return_features
+            is True, the DataFrame also contains detection and SpotFIT features.
+            If return_masks or return_preprocessed is True, returns
+            (dataframe, extras), where extras is a dictionary containing the
+            requested "masks" and/or "preprocessed_images" entries.
+        """
+        input_is_2d = image.ndim == 2
+        if image.ndim not in (2, 3):
+            raise ValueError("image must be a 2D or 3D array.")
+        if input_is_2d:
+            image = image[np.newaxis]
+        if lab is not None and lab.ndim == 2:
+            lab = np.repeat(lab[np.newaxis], image.shape[0], axis=0)
+
+        segmentation_kwargs = dict(self.segmentation_kwargs)
+        do_remove_hot_pixels = segmentation_kwargs.get(
+            "do_remove_hot_pixels", False
+        )
+        gauss_sigma = segmentation_kwargs.get("gauss_sigma", 0.0)
+        do_sharpen = segmentation_kwargs.get("do_sharpen", False)
+        use_gpu = segmentation_kwargs.get("use_gpu", False)
+        logger_func = segmentation_kwargs.get("logger_func", print)
+
+        preprocessed_image = preprocess_image(
+            image,
+            lab=lab,
+            do_remove_hot_pixels=do_remove_hot_pixels,
+            gauss_sigma=gauss_sigma,
+            use_gpu=use_gpu,
+            do_sharpen=False,
+            logger_func=logger_func
+        )
+        if do_sharpen:
+            detection_image = filters.DoG_spots(
+                preprocessed_image,
+                self.spots_zyx_radii_pxl,
+                use_gpu=use_gpu,
+                logger_func=logger_func,
+                lab=lab
+            )
+        else:
+            detection_image = preprocessed_image
+
+        segmentation_kwargs = self._without_reserved_kwargs(
+            segmentation_kwargs,
+            reserved={
+                "do_remove_hot_pixels", "gauss_sigma", "do_sharpen",
+                "do_preprocess", "do_try_all_thresholds", "return_only_segm",
+                "keep_input_shape", "lab", "raw_image",
+                "spots_zyx_radii_pxl"
+            }
+        )
+        if segmentation_kwargs.get("thresholding_method") is None:
+            segmentation_kwargs["thresholding_method"] = "threshold_li"
+        segmentation_kwargs.update({
+            "lab": lab,
+            "raw_image": image,
+            "spots_zyx_radii_pxl": self.spots_zyx_radii_pxl,
+            "do_preprocess": False,
+            "do_try_all_thresholds": False,
+            "return_only_segm": False,
+            "keep_input_shape": True
+        })
+        segmentation_result = spots_semantic_segmentation(
+            detection_image, **segmentation_kwargs
+        )
+        segmentation_mask = self._get_segmentation_mask(
+            segmentation_result, detection_image.shape
+        )
+        if input_is_2d and segmentation_mask.ndim == 3:
+            segmentation_mask = segmentation_mask[0]
+
+        detection_kwargs = self._without_reserved_kwargs(
+            self.detection_kwargs,
+            reserved={
+                "image", "spots_segmantic_segm", "spots_zyx_radii_pxl",
+                "return_spots_mask", "lab", "return_df"
+            }
+        )
+        df_coords, _ = spot_detection(
+            detection_image,
+            spots_segmantic_segm=segmentation_mask,
+            spots_zyx_radii_pxl=self.spots_zyx_radii_pxl,
+            return_spots_mask=False,
+            lab=lab,
+            return_df=True,
+            **detection_kwargs
+        )
+
+        output_df = df_coords
+        fitted_df = None
+        need_fit = return_features or return_masks
+        if need_fit and len(df_coords):
+            features_kwargs = self._without_reserved_kwargs(
+                self.features_kwargs,
+                reserved={
+                    "image", "spots_zyx_radii_pxl", "df_spots_coords",
+                    "frame_i", "sharp_spots_image", "lab", "zyx_voxel_size"
+                }
+            )
+            features_kwargs.setdefault("show_progress", False)
+            features_kwargs.setdefault("verbose", False)
+            keys, _, dfs_spots_gop = spots_calc_features_and_filter(
+                image,
+                self.spots_zyx_radii_pxl,
+                df_coords,
+                frame_i=self.frame_i,
+                sharp_spots_image=detection_image,
+                lab=lab,
+                zyx_voxel_size=self.zyx_voxel_size,
+                **features_kwargs
+            )
+
+            if dfs_spots_gop:
+                df_spots_all = pd.concat(
+                    dfs_spots_gop,
+                    keys=keys,
+                    names=["frame_i", "Cell_ID"]
+                )
+                if len(df_spots_all):
+                    df_spots = df_spots_all.xs(
+                        self.frame_i, level="frame_i", drop_level=True
+                    )
+                else:
+                    df_spots = df_spots_all.droplevel("frame_i")
+            else:
+                df_spots = df_coords.iloc[0:0].copy()
+
+            if len(df_spots):
+                fit_kwargs = self._without_reserved_kwargs(
+                    self.spotfit_kwargs,
+                    reserved={
+                        "kernel", "spots_img", "df_spots", "zyx_voxel_size",
+                        "zyx_spot_min_vol_um", "spots_zyx_radii_pxl",
+                        "lab", "frame_i", "return_df"
+                    }
+                )
+                kernel = (
+                    self.spotfit_kernel
+                    if self.spotfit_kernel is not None
+                    else core.SpotFIT()
+                )
+                fit_kwargs.setdefault("show_progress", False)
+                fit_kwargs.setdefault("verbose", False)
+                df_fit_all, _ = spotfit(
+                    kernel,
+                    image,
+                    df_spots,
+                    zyx_voxel_size=self.zyx_voxel_size,
+                    zyx_spot_min_vol_um=self.zyx_spot_min_vol_um,
+                    spots_zyx_radii_pxl=self.spots_zyx_radii_pxl,
+                    lab=lab,
+                    frame_i=self.frame_i,
+                    return_df=True,
+                    **fit_kwargs
+                )
+                if (isinstance(df_fit_all.index, pd.MultiIndex)
+                        and "frame_i" in df_fit_all.index.names):
+                    fitted_df = df_fit_all.xs(
+                        self.frame_i, level="frame_i", drop_level=True
+                    )
+                else:
+                    fitted_df = df_fit_all
+            else:
+                fitted_df = df_spots
+
+            if return_features:
+                output_df = fitted_df
+
+        extras = {}
+        if return_masks:
+            if fitted_df is not None and len(fitted_df):
+                _, fitted_mask, fitted_labels = utils.get_spotfit_image(
+                    fitted_df, image.shape
+                )
+            else:
+                fitted_mask = np.zeros(image.shape, dtype=bool)
+                fitted_labels = np.zeros(image.shape, dtype=np.uint32)
+            if input_is_2d:
+                fitted_mask = fitted_mask[0]
+                fitted_labels = fitted_labels[0]
+
+            extras["masks"] = {
+                "segmentation": segmentation_mask,
+                "fitted": {
+                    "mask": fitted_mask,
+                    "labels": fitted_labels
+                }
+            }
+
+        if return_preprocessed:
+            if input_is_2d:
+                preprocessed_image = preprocessed_image[0]
+                detection_image = detection_image[0]
+            extras["preprocessed_images"] = {
+                "preprocessed": preprocessed_image,
+                "detection": detection_image
+            }
+
+        if extras:
+            return output_df, extras
+        return output_df
