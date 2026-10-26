@@ -1899,7 +1899,7 @@ def spots_calc_features_and_filter(
             # _debug._spots_filtering(
             #     local_spots_img, df_obj_spots_gop, obj, obj_image
             # )
-            
+
             df_obj_spots_gop = filter_spots_from_features_thresholds(
                 df_obj_spots_gop, gop_filtering_thresholds,
                 is_spotfit=False, 
@@ -1908,7 +1908,7 @@ def spots_calc_features_and_filter(
                 verbose=False
             )
             num_spots_filtered = len(df_obj_spots_gop)   
-            
+
             if num_spots_filtered == num_spots_prev or num_spots_filtered == 0:
                 # Number of filtered spots stopped decreasing --> stop loop
                 break
@@ -2486,7 +2486,7 @@ class Model:
         Minimum spot radii in micrometers for SpotSIZE. If omitted, these are
         derived from spots_zyx_radii_pxl and zyx_voxel_size.
     segmentation_kwargs : dict, optional
-        Keyword arguments for spots_semantic_segmentation. The default
+        Keyword arguments for `pipe.spots_semantic_segmentation`. The default
         thresholding method is threshold_li. Preprocessing settings such as
         gauss_sigma, do_remove_hot_pixels, and do_sharpen are also read here.
     detection_kwargs : dict, optional
@@ -2496,6 +2496,11 @@ class Model:
         Additional keyword arguments for spots_calc_features_and_filter.
     spotfit_kwargs : dict, optional
         Additional keyword arguments for spotfit.
+    spotfit_check_merge : bool, optional
+        If True, spotfit will use the mask from the segmentation step to 
+        check if spots have been merged (according to fit). This is ignored 
+        if `spotfit_kwargs['spots_masks_check_merge']` is not None.
+        Default is False.
     spotfit_kernel : spotmax.core.SpotFIT, optional
         Initialized SpotFIT kernel. A new kernel is created for each call to
         predict when this is omitted.
@@ -2519,6 +2524,7 @@ class Model:
             features_kwargs=None,
             spotfit_kwargs=None,
             spotfit_kernel=None,
+            spotfit_check_merge=False,
             frame_i=0
         ):
         self.spots_zyx_radii_pxl = np.asarray(
@@ -2550,6 +2556,7 @@ class Model:
         self.features_kwargs = dict(features_kwargs or {})
         self.spotfit_kwargs = dict(spotfit_kwargs or {})
         self.spotfit_kernel = spotfit_kernel
+        self.spotfit_check_merge = spotfit_check_merge
         self.frame_i = frame_i
 
     @staticmethod
@@ -2767,6 +2774,14 @@ class Model:
                 )
                 fit_kwargs.setdefault("show_progress", False)
                 fit_kwargs.setdefault("verbose", False)
+                if (
+                        fit_kwargs.get('spots_masks_check_merge') is None
+                        and self.spotfit_check_merge
+                    ):
+                    fit_kwargs['spots_masks_check_merge'] = (
+                        segmentation_mask
+                    )
+
                 df_fit_all, _ = spotfit(
                     kernel,
                     image,
