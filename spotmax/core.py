@@ -6002,7 +6002,8 @@ class Kernel(_ParamsParser):
             spots_data, transformed_spots_ch_nnet=transformed_spots_ch_nnet
         )
         if save_preproc_spots_img:
-            preproc_spots_data = np.zeros_like(spots_data)[:stopFrameNum]
+            preproc_spots_data = np.zeros_like(spots_data[:stopFrameNum])
+            detect_input_data = np.zeros_like(spots_data[:stopFrameNum])
         
         """---------------------SPOT DETECTION-------------------------------"""
         nnet_pred_map = None
@@ -6032,6 +6033,7 @@ class Kernel(_ParamsParser):
             )
             if save_preproc_spots_img:
                 preproc_spots_data[frame_i] = preproc_spots_img
+                detect_input_data[frame_i] = preproc_spots_img
             if do_sharpen_spots:
                 sharp_spots_img = self.sharpen_spots(
                     preproc_spots_img, self.metadata, lab=lab
@@ -6040,7 +6042,7 @@ class Kernel(_ParamsParser):
                 sharp_spots_img = None
             
             if save_preproc_spots_img and sharp_spots_img is not None:
-                preproc_spots_data[frame_i] = sharp_spots_img
+                detect_input_data[frame_i] = sharp_spots_img
             
             ref_ch_img = None
             filtered_ref_ch_img = None
@@ -6127,12 +6129,27 @@ class Kernel(_ParamsParser):
                 basename,
                 spots_ch_endname,
                 run_number,
+                text_id='_preprocessed',
                 text_to_append=text_to_append,
                 cast_to_dtype=data['spots_ch.dtype'], 
                 pad_width=data['pad_width'],
                 verbose=verbose,
                 logger_func=self.logger.info
             )
+            if sharp_spots_img is not None:
+                io.save_preprocessed_img_data(
+                    detect_input_data, 
+                    raw_spots_data_filepath, 
+                    basename,
+                    spots_ch_endname,
+                    run_number,
+                    text_id='_detect_input',
+                    text_to_append=text_to_append,
+                    cast_to_dtype=data['spots_ch.dtype'], 
+                    pad_width=data['pad_width'],
+                    verbose=verbose,
+                    logger_func=self.logger.info
+                )
         
         if nnet_pred_map is not None:
             print('')

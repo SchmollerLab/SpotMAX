@@ -51,12 +51,27 @@ class Abstract3DUNet(nn.Module):
         assert len(f_maps) > 1, "Required at least 2 levels in the U-Net"
 
         # create encoder path
-        self.encoders = create_encoders(in_channels, f_maps, basic_module, conv_kernel_size, conv_padding, layer_order,
-                                        num_groups, pool_kernel_size)
+        self.encoders = create_encoders(
+            in_channels, 
+            f_maps, 
+            basic_module, 
+            conv_kernel_size, 
+            conv_padding, 
+            layer_order,
+            num_groups, 
+            pool_kernel_size
+        )
 
         # create decoder path
-        self.decoders = create_decoders(f_maps, basic_module, conv_kernel_size, conv_padding, layer_order, num_groups,
-                                        upsample=True)
+        self.decoders = create_decoders(
+            f_maps, 
+            basic_module, 
+            conv_kernel_size, 
+            conv_padding, 
+            layer_order, 
+            num_groups,
+            upsample=True
+        )
 
         # in the last layer a 1×1 convolution reduces the number of output
         # channels to the number of labels

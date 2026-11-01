@@ -128,8 +128,8 @@ are optional and can be saved by activating the parameters
 
 The naming pattern is the following::
 
-    <basename>_run_num<run_number>_<spots_ch_name>_preprocessed_<appended_text>.<ext>
-    <basename>_run_num<run_number>_<ref_ch_name>_preprocessed_<appended_text>.<ext>
+    <basename>_run_num<run_number>_<spots_ch_name><text_id><appended_text>.<ext>
+    <basename>_run_num<run_number>_<ref_ch_name><text_id><appended_text>.<ext>
 
 where ``<basename>`` is the common part of all the file names in the Position 
 folder, ``<run_number>`` is the run number defined at :confval:`Run number`, 
@@ -138,3 +138,5 @@ parameter, ``<ref_ch_name>`` is the text provided at the :confval:`Reference cha
 parameter, ``<appended_text>`` is the text provided at the 
 :confval:`Text to append at the end of the output files` 
 parameter, and ``<ext>`` is the extension of the input channel file.
+
+For the spots channel, there are two types of pre-processed data. One is identified in the filename by ``<text_id> = '_preprocessed_'`` and it's the output of the gaussian filter (see parameter :confval:`Initial gaussian filter sigma`). The other one is present only if the parameter  :confval:`Sharpen spots signal prior detection` was activated and it is identified by ``<text_id> = '_detect_input_'``. The ``_preprocessed_`` image is the one used to compute the features described in the section :ref:`preprocessed_intens_metrics`, while the ``_detect_input_`` is the image used by SpotMAX to detect spots. However, if ``_detect_input_`` is not requested, the ``_preprocessed_`` image is also used to detect spots.

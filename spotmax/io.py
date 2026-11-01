@@ -505,9 +505,17 @@ def readStoredParamsINI(ini_path, params, cast_dtypes=True):
     return params
 
 def save_preprocessed_img_data(
-        img_data, raw_img_filepath, basename, ch_endname, run_number, 
-        text_to_append='', cast_to_dtype=None, pad_width=None, 
-        verbose=True, logger_func=print
+        img_data, 
+        raw_img_filepath, 
+        basename, 
+        ch_endname, 
+        run_number, 
+        text_id='_preprocessed',
+        text_to_append='', 
+        cast_to_dtype=None, 
+        pad_width=None, 
+        verbose=True, 
+        logger_func=print
     ):
     if verbose:
         logger_func(
@@ -526,7 +534,7 @@ def save_preprocessed_img_data(
     in_filename = os.path.basename(raw_img_filepath)
     _, ext = os.path.splitext(in_filename)
     
-    out_filename = f'{basename}run_num{run_number}_{ch_endname}_preprocessed'
+    out_filename = f'{basename}run_num{run_number}_{ch_endname}{text_id}'
     if text_to_append:
         if not text_to_append.startswith('_'):
             text_to_append = f'_{text_to_append}'
@@ -540,8 +548,8 @@ def save_preprocessed_img_data(
     
     if verbose:
         logger_func(
-            f'Pre-processed image data from channel "{ch_endname}" saved to '
-            f'"{out_filepath}"...'
+            f'{text_id.capitalize()} image data from channel '
+            f'"{ch_endname}" saved to "{out_filepath}"...'
         )
 
 def save_nnet_pred_map(
