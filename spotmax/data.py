@@ -76,6 +76,7 @@ def synthetic_spots(
         spots_radii=(2, 4, 4),
         noise_scale=0.05, 
         noise_shape=0.03, 
+        return_df=False,
         rng_seed=11
     ):
     """_summary_
@@ -149,7 +150,21 @@ def synthetic_spots(
     img += noise
     img /= img.max()
     
-    return img, mask, zyx_spots_coords
+    if not return_df:
+        return img, mask, zyx_spots_coords
+    
+    df_spots_coords = pd.DataFrame({
+        'Cell_ID': [1]*len(zyx_spots_coords),
+        'spot_id': np.arange(1, len(zyx_spots_coords)+1),
+        'z': zyx_spots_coords[:, 0],
+        'y': zyx_spots_coords[:, 1],
+        'x': zyx_spots_coords[:, 2],
+        'z_local': zyx_spots_coords[:, 0],
+        'y_local': zyx_spots_coords[:, 1],
+        'x_local': zyx_spots_coords[:, 2],
+    }).set_index(['Cell_ID', 'spot_id'])
+
+    return img, mask, zyx_spots_coords, df_spots_coords
 
 class _SpotMaxData(_Data):
     def __init__(

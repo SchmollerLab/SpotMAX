@@ -322,3 +322,4 @@ def get_watchdog_filepaths(identifier: str):
 from . import (
     config, core, data, features, filters, io, pipe, transformations, utils
 )
+from .pipe import Model
