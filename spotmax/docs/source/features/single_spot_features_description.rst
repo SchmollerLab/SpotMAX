@@ -344,6 +344,8 @@ actual segmentation of the spots.
 * **95 percentile**: column name ``spot_raw_q95_in_spot_minimumsize_vol``.
 * **Standard deviation**: column name ``spot_raw_std_in_spot_minimumsize_vol``.
 
+.. _preprocessed_intens_metrics:
+
 Preprocessed intens. metrics
 ----------------------------
 
